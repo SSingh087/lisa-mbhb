@@ -45,8 +45,13 @@ class TDIModel:
         self.psd = {c: psds[c] for c in self.channels}
         self._idx = {"A": 0, "E": 1, "T": 2}
 
-    def __call__(self, p):
+    def __call__(self, p, amplification=None):
+        """TDI channels for parameters p.  `amplification`: optional callable F(f)
+        (complex lensing amplification factor) applied to h+ and hx."""
         hp, hc, t_f = waveform.generate(p, self.f, self.cfg)
+        if amplification is not None:
+            F = amplification(self.f)
+            hp, hc = hp * F, hc * F
         t_c = np.interp(self.fc, self.f, t_f)
         ones = np.ones_like(self.fc)
         zeros = np.zeros_like(self.fc)
