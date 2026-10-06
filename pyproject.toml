@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lisa-mbhb"
+version = "0.1.0"
+description = "LISA MBHB waveforms (PyCBC), TDI response, SciRDv1 noise, and GWLENS lensing"
+requires-python = ">=3.9"
+dependencies = ["numpy", "scipy", "matplotlib", "astropy", "h5py", "mpmath", "pycbc"]
+
+[tool.setuptools]
+packages = ["lisa_mbhb"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
