@@ -17,7 +17,7 @@ import sys
 import numpy as np
 from scipy.interpolate import CubicSpline, RectBivariateSpline
 
-from . import inference, waveform
+from . import inference, overlap, waveform
 from .constants import C, G, MSUN
 
 _GWLENS = os.environ.get("GWLENS_PATH", os.path.expanduser("~/GWLENS"))
@@ -101,7 +101,7 @@ class LensedMBHB:
         s = self.tdi(lensed)
         return float(np.sqrt(self.model.inner(s, s)))
 
-    def mismatch(self):
-        """1 - overlap between lensed and unlensed signals (0 = indistinguishable)."""
-        a, b = self.tdi(True), self.tdi(False)
-        return 1 - self.model.inner(a, b) / np.sqrt(self.model.inner(a, a) * self.model.inner(b, b))
+    def mismatch(self, max_dt=0.0, n_dt=1):
+        """1 - overlap(lensed, unlensed), maximised over a global phase and, if
+        max_dt > 0, a time shift in [-max_dt, max_dt] seconds (n_dt trial values)."""
+        return overlap.mismatch(self.model, self.tdi(True), self.tdi(False), max_dt, n_dt)
