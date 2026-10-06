@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, ROOT)
 from pycbc.waveform import fd_approximants                      # noqa: E402
-from lisa_mbhb import demo, inference as I, noise, overlap, waveform as W   # noqa: E402
+from lisa_mbhb import demo, noise, workflow   # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--approximants", nargs="+", default=["IMRPhenomD", "IMRPhenomXHM", "IMRPhenomHM"])
@@ -26,24 +26,17 @@ print("PyCBC Phenom FD approximants:", [x for x in fd_approximants() if "Phenom"
 p = demo.default_params(a.m1, a.m2, a.z)
 print(f"detector-frame m1={p['mass1']:.3e} m2={p['mass2']:.3e} dL={p['distance']:.0f} Mpc")
 
+comp = workflow.compare_approximants(p, a.approximants, tdi=a.tdi)
 results, sigs = {}, {}
-for name in a.approximants:
-    cfg = W.WaveformConfig(approximant=name, tc_ref=p["tc"])
-    inj = I.make_injection(p, cfg, tdi=a.tdi)
+for name, r in comp.items():
+    inj = r["inj"]
     sigs[name] = inj
-    results[name] = dict(snr=inj.snr, snr_channels=inj.snr_channels, n_freq=len(inj.model.f))
-    print(f"{name:14s} SNR={inj.snr:9.1f}  A={inj.snr_channels['A']:.0f} E={inj.snr_channels['E']:.0f} "
-          f"T={inj.snr_channels['T']:.1f}  ({len(inj.model.f)} freq points)")
-
-ref = a.approximants[0]
-for name in a.approximants[1:]:
-    # compare on the reference grid
-    m = sigs[ref].model
-    other = I.TDIModel(m.f, W.WaveformConfig(approximant=name, tc_ref=p["tc"]), tdi=a.tdi)(p)
-    # approximants use different time-origin conventions -> maximise over a +-300 s shift
-    mm = overlap.mismatch(m, sigs[ref].signal, other, max_dt=300.0, n_dt=601)
-    results[name]["mismatch_vs_" + ref] = mm
-    print(f"mismatch {name} vs {ref}: {mm:.2e}")
+    results[name] = dict(snr=r["snr"], snr_channels=r["snr_channels"], n_freq=len(inj.model.f))
+    print(f"{name:14s} SNR={r['snr']:9.1f}  A={r['snr_channels']['A']:.0f} E={r['snr_channels']['E']:.0f} "
+          f"T={r['snr_channels']['T']:.1f}  ({len(inj.model.f)} freq points)")
+    if r["mismatch_vs_ref"] is not None:
+        results[name]["mismatch_vs_" + a.approximants[0]] = r["mismatch_vs_ref"]
+        print(f"   mismatch vs {a.approximants[0]}: {r['mismatch_vs_ref']:.2e}")
 
 fg = np.logspace(-5, 0, 800)
 fig, ax = plt.subplots(figsize=(7.5, 4.8))
