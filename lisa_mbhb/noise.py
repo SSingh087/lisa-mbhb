@@ -79,34 +79,37 @@ def psd_tdi_T(f, tdi=1):
 
 
 def _confusion_tdi(f, t_obs_years, tdi):
+    """Confusion noise in the A/E channel (strain PSD times 2 * channel response)."""
     x = 2 * np.pi * f * LISA_ARM / C
-    # strain-PSD confusion -> A/E channel through the averaged response
-    s = galactic_confusion(f, t_obs_years) * 4 * x**2 * np.sin(x) ** 2 * response_average_AE(f)
+    s = 2 * galactic_confusion(f, t_obs_years) * 4 * x**2 * np.sin(x) ** 2 * response_average_AE(f)
     if tdi == 2:
         s = s * 4 * np.sin(2 * x) ** 2
     return s
 
 
 def response_average_AE(f):
-    """Sky/polarisation/inclination averaged response R(f) of one AE channel
-    (analytic fit of Cornish & Robson 2017, valid up to ~ 0.1 Hz)."""
+    """Sky/polarisation-averaged response of one A (or E) channel, |A|^2 per unit
+    |h+|^2 divided by 4 x^2 sin^2 x (x = 2 pi f L / c).
+
+    Low-frequency limit 0.9 (= 1.5 * 3/5 for A = 1.5 X); the (1 + 0.6 (f/f*)^2)
+    roll-off is the SciRD fit, accurate to ~10% below f*.
+    """
     f = np.asarray(f, float)
-    return 3.0 / 20.0 / (1 + 0.6 * (f / F_STAR) ** 2)
+    return 0.9 / (1 + 0.6 * (f / F_STAR) ** 2)
 
 
 def sensitivity_curve(f, tdi=1, confusion=False, t_obs_years=4.0):
-    """Sky-averaged sensitivity Sn(f) [1/Hz, strain] of the A+E network,
-    i.e. the curve a signal's characteristic strain is compared with.
+    """Sky-averaged strain sensitivity Sn(f) [1/Hz] of the A+E pair
+    (SciRDv1: 10/(3L^2) [P_oms + ...] (1 + 0.6 (f/f*)^2) [+ galactic confusion]).
+
+    This is the curve to overlay on a source's characteristic strain.
     """
     f = np.asarray(f, float)
     x = 2 * np.pi * f * LISA_ARM / C
-    # PSD of one AE channel / (averaged response * transfer^2)
     norm = 4 * x**2 * np.sin(x) ** 2 * response_average_AE(f)
     if tdi == 2:
         norm = norm * 4 * np.sin(2 * x) ** 2
-    s_inst = psd_tdi_A(f, tdi=tdi) / norm
-    # two independent channels A, E
-    s = s_inst / 2.0
+    s = psd_tdi_A(f, tdi=tdi) / (2 * norm)
     if confusion:
-        s = s + galactic_confusion(f, t_obs_years) / 2.0
+        s = s + galactic_confusion(f, t_obs_years)
     return s
