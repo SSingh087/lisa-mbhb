@@ -17,9 +17,11 @@ Lensing of gravitational waves probes the matter distribution of the lens on sca
 | Waveform & SNR (`lisa_mbhb_01_waveform_snr.py`) | Does the TDI model reproduce the expected sky-averaged SNR, and are different waveform approximants consistent? | SNR ≈ 3376-3415 across `IMRPhenomD`/`XHM`/`HM` for a 5×10⁵ + 2.5×10⁵ M<sub>sun</sub> source at z=1; higher-order modes agree with `IMRPhenomD` to ~2% mismatch |
 | Lensed SNR scan (`lisa_mbhb_02_lensed_snr.py`) | How much does a point-mass lens change the detected SNR as a function of impact parameter y? | A 10⁷ M<sub>sun</sub> lens nearly doubles the SNR at y=0.3 (6710 vs 3376 unlensed) and the effect falls off smoothly by y=2 |
 | Mismatch scan (`lisa_mbhb_03_mismatch.py`) | At what lens mass / impact parameter does lensing become distinguishable from the unlensed signal at this SNR? | Mismatch grows with lens mass and shrinks with y; compared against the ~11-parameter distinguishability threshold at SNR≈3400 |
+| Composite lens mismatch (point mass + NFW) | Does a dark-matter subhalo around the central compact object change the mismatch signature, and is it detectable? | Mismatch peaks around y≈1 for all configurations (central/off-centre NFW, with/without shear); the off-centre and shear terms shift the peak by up to ~50% depending on lens mass, within the LISA-detectable region |
 
 ![LISA MBHB signal against the SciRDv1 noise curve](figures/lisa_mbhb_01_waveform_snr.png)
 ![Lensed vs unlensed SNR scan over impact parameter](figures/lisa_mbhb_02_lensed_snr.png)
+![Mismatch between lensed and unlensed signals vs impact parameter and point-mass lens mass, for central/off-centre NFW subhalos with and without shear](figures/lisa_mbhb_03_mismatch_detectability.png)
 
 ## Repository layout
 
