@@ -18,7 +18,7 @@ import numpy as np
 from scipy.interpolate import CubicSpline, RectBivariateSpline
 
 from . import inference, overlap, waveform
-from .constants import C, G, MSUN
+from .constants import C, G, MSUN, MPC
 
 _GWLENS = os.environ.get("GWLENS_PATH", os.path.expanduser("~/GWLENS"))
 if os.path.isdir(_GWLENS) and _GWLENS not in sys.path:
@@ -68,6 +68,79 @@ class LookupTableLens:
         w = np.clip(self.w_of_f(np.asarray(f)), *self.wlim)
         y = float(np.clip(self.y, *self.ylim))
         return self.re.ev(w, y) + 1j * self.im.ev(w, y)
+
+
+class PMInHaloLens1D:
+    """On-axis point mass embedded in an NFW halo (GWLENS 1D solver, axisymmetric).
+    Used by lisa_mbhb.fisher, which needs fast on-axis lenses for finite-difference derivatives;
+    the off-axis Solver2DLens family above (build_lens_set) is the general-purpose version.
+
+    Dimensionless variables are the *point-mass* ones, so a vanishing halo recovers PointMassLens:
+        w = W_CONST * mass_lz * f,   x = xi / xi0(mass_lz),   y in units of xi0(mass_lz).
+    Potential psi(x) = ln x + psi0 * NFW(k x), with the repo's convention (scripts/Compositecontour.py,
+    psi0_NFW = M_halo/M_PM when xi0 is built from M_halo):
+        psi0 = (1 + zl) * halo_mass / mass_lz,   k = xi0 / r_s,
+        xi0 = sqrt(4 G d_eff mass_lz) / c,       d_eff = D_L D_LS / ((1+zl) D_S).
+    r_s = R_200 / c_200 with 200*rho_crit(zl) and c_200 = 8/(1+zl) (M h/1e14)^-0.13 (as in Compositecontour.py).
+    ASSUMPTIONS: point mass exactly at the halo centre; mass_lz is the redshifted PM mass; halo_mass is the
+    physical M_200 in Msun; flat LCDM H0=70, Om=0.3.
+    """
+    H0, OM, OL, DELTA = 70e3 / MPC, 0.3, 0.7, 200
+
+    def __init__(self, mass_lz, y, halo_mass, zl, zs, conc=None):
+        self.mass_lz, self.y, self.halo_mass, self.zl, self.zs = mass_lz, y, halo_mass, zl, zs
+        self.conc = conc
+        self.d_eff = self._d_eff(zl, zs)
+        self.xi0 = np.sqrt(4 * G * self.d_eff * mass_lz * MSUN) / C
+        self.xs = self._r_s() / self.xi0
+        self.psi0 = (1 + zl) * halo_mass / mass_lz
+
+    @classmethod
+    def _d_eff(cls, zl, zs):
+        E = lambda z: np.sqrt(cls.OM * (1 + z) ** 3 + cls.OL)
+        dh = C / cls.H0
+        dc = lambda a, b: dh * quad(lambda z: 1 / E(z), a, b)[0]
+        d_l, d_s, d_ls = dc(0, zl) / (1 + zl), dc(0, zs) / (1 + zs), dc(zl, zs) / (1 + zs)
+        return d_l * d_ls / ((1 + zl) * d_s)
+
+    def _r_s(self):
+        c200 = self.conc or 8 / (1 + self.zl) * (self.halo_mass * 0.7 / 1e14) ** (-0.13)
+        h_z = self.H0 * np.sqrt(self.OM * (1 + self.zl) ** 3 + self.OL)
+        rho_c = 3 * h_z ** 2 / (8 * np.pi * G)
+        r200 = (3 * self.halo_mass * MSUN / (4 * np.pi * self.DELTA * rho_c)) ** (1 / 3)
+        return r200 / c200
+
+    def amplification(self, f):
+        from gwlens.solver import solver1d as S1
+        w = W_CONST * self.mass_lz * np.asarray(f)
+        pot = S1.point_mass(1.0) + S1.nfw(k=1.0 / self.xs, psi0=self.psi0)
+        with S1.Solver1D(pot, y=self.y, wmin=w.min() * 0.99, wmax=w.max() * 1.01, **S1.PE_SETTINGS) as s:
+            return np.asarray(s.spectrum(w), dtype=complex)
+
+
+class HaloOnlyLens1D(PMInHaloLens1D):
+    """The NFW halo ALONE (no central point mass), in exactly the same normalisation as
+    PMInHaloLens1D (w, x, y and psi0 defined through the reference mass `mass_lz`), so it compares
+    point by point with the composite at the same (mass_lz, y).  `mass_lz` is then only a unit
+    choice (xi0 = Einstein radius of a point mass mass_lz)."""
+
+    def amplification(self, f):
+        from gwlens.solver import solver1d as S1
+        w = W_CONST * self.mass_lz * np.asarray(f)
+        pot = S1.nfw(k=1.0 / self.xs, psi0=self.psi0)
+        with S1.Solver1D(pot, y=self.y, wmin=w.min() * 0.99, wmax=w.max() * 1.01, **S1.PE_SETTINGS) as s:
+            return np.asarray(s.spectrum(w), dtype=complex)
+
+
+def make_lens(spec, mass_lz, y, zs, zl_frac=0.5):
+    """On-axis lens for lisa_mbhb.fisher.  spec: 'pm' | 'nfw:<M200 Msun>' (PM inside an NFW halo
+    at zl = zl_frac * zs) | 'halo:<M200 Msun>' (the halo alone)."""
+    if spec == "pm":
+        return PointMassLens(mass_lz, y)
+    kind, _, mh = spec.partition(":")
+    if kind not in ("nfw", "halo") or not mh:
+        raise ValueError(f"bad lens spec {spec!r}; use 'pm', 'nfw:<M200>' (point mass + halo) or 'halo:<M200>' (halo only)")
+    return (PMInHaloLens1D if kind == "nfw" else HaloOnlyLens1D)(mass_lz, y, float(mh), zl_frac * zs, zs)
 
 
 class LensedMBHB:
