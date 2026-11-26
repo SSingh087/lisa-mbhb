@@ -24,10 +24,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - name: Install package with test and lensing extras
+      - name: Install package and all dependencies (incl. GWLENS)
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ".[test,lensing]"
+          python -m pip install ".[test]"
       - name: Run tests
         run: python -m pytest -q
 

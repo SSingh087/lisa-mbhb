@@ -8,11 +8,13 @@ version = "0.1.0"
 description = "LISA MBHB waveforms (PyCBC), TDI response, SciRDv1 noise, and GWLENS lensing"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["numpy", "scipy", "matplotlib", "astropy", "h5py", "mpmath", "pycbc"]
+dependencies = [
+    "numpy", "scipy", "matplotlib", "astropy", "h5py", "mpmath", "pycbc",
+    # GWLENS is not on PyPI; installed from GitHub.
+    "gwlens @ git+https://github.com/hsreekanth15/GWLENS.git",
+]
 
 [project.optional-dependencies]
-# GWLENS is not on PyPI; install it from GitHub (or point GWLENS_PATH at a local checkout).
-lensing = ["gwlens @ git+https://github.com/hsreekanth15/GWLENS.git"]
 test = ["pytest"]
 
 [tool.setuptools]
