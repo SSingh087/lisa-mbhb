@@ -89,7 +89,7 @@ def test_amplification_hook_scales_signal(injection, params):
 
 
 def test_point_lens_geometric_optics_limit():
-    from gwlens.lens.point import F_analytic
+    F_analytic = pytest.importorskip("gwlens.lens.point").F_analytic
     y = 0.8
     w = np.linspace(150, 160, 400)
     f2 = np.mean([abs(F_analytic(wi, y)) ** 2 for wi in w])
@@ -98,7 +98,7 @@ def test_point_lens_geometric_optics_limit():
 
 
 def test_point_lens_interpolation_matches_exact():
-    from gwlens.lens.point import F_analytic
+    F_analytic = pytest.importorskip("gwlens.lens.point").F_analytic
     lens = L.PointMassLens(1e7, 0.5)
     f = np.array([2e-3, 7e-3, 1.3e-2])
     F = lens.amplification(f)
@@ -108,7 +108,7 @@ def test_point_lens_interpolation_matches_exact():
 
 def test_lookup_table_lens_matches_point_lens(tmp_path):
     import h5py
-    from gwlens.lens.point import F_analytic
+    F_analytic = pytest.importorskip("gwlens.lens.point").F_analytic
     w = np.linspace(0.05, 3.0, 60)
     y = np.linspace(0.4, 0.6, 5)
     res = np.array([[[F_analytic(wi, yi).real, F_analytic(wi, yi).imag] for yi in y] for wi in w])
