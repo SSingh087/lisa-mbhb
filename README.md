@@ -37,14 +37,19 @@ figures/           figures and result JSONs produced by the scripts
 ## Installation
 
 ```bash
-git clone https://github.com/SSingh087/mbh-subhalo-lensing.git
-cd mbh-subhalo-lensing
-pip install -e .
+pip install lisa-mbhb
 ```
 
-Requires Python ≥3.9. Core dependencies (`numpy`, `scipy`, `matplotlib`, `astropy`, `h5py`, `mpmath`, `pycbc`) install automatically via `pyproject.toml`.
+or, for development:
 
-Lensing (`lisa_mbhb.lensing`) additionally needs [GWLENS](https://github.com/hsreekanth15/GWLENS) on the Python path. Clone it and either place it at `~/GWLENS` or point to it with:
+```bash
+git clone https://github.com/SSingh087/lisa-mbhb.git
+cd lisa-mbhb
+pip install -e ".[test]"
+pytest
+```
+
+Requires Python ≥3.11. All dependencies, including [GWLENS](https://github.com/hsreekanth15/GWLENS) (`gwlens` on PyPI), install automatically. To use a local GWLENS checkout instead, point to it with:
 
 ```bash
 export GWLENS_PATH=/path/to/GWLENS
