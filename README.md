@@ -55,7 +55,38 @@ Requires Python ≥3.11. All dependencies, including [GWLENS](https://github.com
 export GWLENS_PATH=/path/to/GWLENS
 ```
 
-The waveform/response/noise/inference parts of the package work without GWLENS; only lens amplification factors require it.
+## Lens models
+
+Lenses are chosen by name. Pass only the parameters you want to change; the rest use defaults.
+
+```python
+from lisa_mbhb import lensing as L
+
+L.available_lenses()                         # {name: {parameter: default}}
+lens = L.get_lens("pm")                      # point mass, all defaults (mass_lz=1e7, y=1)
+lens = L.get_lens("pm", mass_lz=1e8, y=0.5)  # override some parameters
+lens = L.get_lens({"name": "nfw", "halo_mass": 1e11, "zs": 2.0})   # config dict, e.g. from JSON
+
+sig = L.LensedMBHB(params, lens={"name": "halo", "halo_mass": 1e9})  # name or config also accepted here
+```
+
+| name (aliases) | lens | parameters (default) |
+|---|---|---|
+| `pm` (`point`, `point_mass`) | point mass, exact F(w, y) | `mass_lz` (1e7), `y` (1.0), `dw` (0.05) |
+| `nfw` (`pm_nfw`) | point mass at the centre of an NFW halo | `mass_lz` (1e7), `y` (1.0), `halo_mass` (1e11, M200), `zs` (1.0), `zl_frac` (0.5), `conc` (None: c200(M) relation) |
+| `halo` (`nfw_only`) | NFW halo alone, same units as `nfw` | as `nfw` |
+| `sis` | singular isothermal sphere | `mass_lz` (1e7), `y` (1.0) |
+| `cis` | cored isothermal sphere | `mass_lz` (1e7), `y` (1.0), `rc` (0.05) |
+| `lookup` | interpolated GWLENS HDF5 table | `table_path` (required), `mass_lz` (1e7), `y` (1.0) |
+
+`mass_lz` is the redshifted lens mass in M<sub>sun</sub> and `y` the impact parameter in Einstein-radius units. Unknown parameter names raise an error. The older `"nfw:1e9"` / `"halo:1e9"` strings still work. To add your own lens:
+
+```python
+@L.register_lens("mylens", dict(mass_lz=1e7, y=1.0, alpha=0.5))
+class MyLens:
+    def __init__(self, mass_lz, y, alpha): ...
+    def amplification(self, f): ...          # complex F(f), f in Hz
+```
 
 ## Usage
 
@@ -78,6 +109,10 @@ pytest
 ```
 
 The suite checks the noise/response implementation against PyCBC's analytical LISA PSDs, the sky-averaged SNR against a Monte-Carlo estimate, the point-mass lens against its analytic geometric-optics limit, and that lensing and mismatch behave as expected (e.g. mismatch decreases with increasing impact parameter).
+
+Lens checks: every solver lens uses the same time convention as the analytic point mass (an NFW lens with a vanishing halo reproduces the point-mass F to 1e-6 in the full complex F), and the NFW normalisation reproduces the halo's M200 from a direct integral of the density.
+
+Reproducibility: `tests/test_reproduce.py` regenerates the waveforms (h+, h× for IMRPhenomD/XHM/HM), TDI SNRs, approximant mismatches, lensed SNRs and F(f) of every lens, and compares them to `tests/data/reference.json` (relative tolerance 1e-9 for waveforms and SNRs) and to the published `figures/*.json`. The reference file records the library versions it was made with. Regenerate it only on purpose, with `python scripts/make_reference.py`.
 
 ## Contributors
 
