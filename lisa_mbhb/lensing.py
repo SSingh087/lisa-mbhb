@@ -9,7 +9,8 @@ the LISA MBHB signal.
 
 Lens classes only need an ``amplification(f)`` method returning the complex F(f)
 for GW frequencies f [Hz] (detector frame, lens mass redshifted).
-GWLENS is found via the GWLENS_PATH environment variable (default ~/GWLENS).
+GWLENS (``gwlens`` on PyPI, >=0.2.2) is a regular dependency. To use a local GWLENS
+checkout instead, set the GWLENS_PATH environment variable to its root directory.
 """
 import os
 import sys
@@ -20,9 +21,9 @@ from scipy.interpolate import CubicSpline, RectBivariateSpline
 from . import inference, overlap, waveform
 from .constants import C, G, MSUN, MPC
 
-_GWLENS = os.environ.get("GWLENS_PATH", os.path.expanduser("~/GWLENS"))
-if os.path.isdir(_GWLENS) and _GWLENS not in sys.path:
-    sys.path.append(_GWLENS)
+_GWLENS = os.environ.get("GWLENS_PATH")
+if _GWLENS and os.path.isdir(_GWLENS) and _GWLENS not in sys.path:
+    sys.path.insert(0, _GWLENS)     # explicit local checkout takes precedence over the installed gwlens
 
 W_CONST = 8 * np.pi * G * MSUN / C**3     # w = W_CONST * M_Lz[Msun] * f
 

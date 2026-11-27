@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lisa-mbhb"
-version = "0.1.0"
+version = "0.1.1"
 description = "LISA MBHB waveforms (PyCBC), TDI response, SciRDv1 noise, and GWLENS lensing"
 readme = "README.md"
 license = "MIT"
