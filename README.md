@@ -55,7 +55,38 @@ Requires Python ≥3.11. All dependencies, including [GWLENS](https://github.com
 export GWLENS_PATH=/path/to/GWLENS
 ```
 
-The waveform/response/noise/inference parts of the package work without GWLENS; only lens amplification factors require it.
+## Lens models
+
+Lenses are chosen by name. Pass only the parameters you want to change; the rest use defaults.
+
+```python
+from lisa_mbhb import lensing as L
+
+L.available_lenses()                         # {name: {parameter: default}}
+lens = L.get_lens("pm")                      # point mass, all defaults (mass_lz=1e7, y=1)
+lens = L.get_lens("pm", mass_lz=1e8, y=0.5)  # override some parameters
+lens = L.get_lens({"name": "nfw", "halo_mass": 1e11, "zs": 2.0})   # config dict, e.g. from JSON
+
+sig = L.LensedMBHB(params, lens={"name": "halo", "halo_mass": 1e9})  # name or config also accepted here
+```
+
+| name (aliases) | lens | parameters (default) |
+|---|---|---|
+| `pm` (`point`, `point_mass`) | point mass, exact F(w, y) | `mass_lz` (1e7), `y` (1.0), `dw` (0.05) |
+| `nfw` (`pm_nfw`) | point mass at the centre of an NFW halo | `mass_lz` (1e7), `y` (1.0), `halo_mass` (1e11, M200), `zs` (1.0), `zl_frac` (0.5), `conc` (None: c200(M) relation) |
+| `halo` (`nfw_only`) | NFW halo alone, same units as `nfw` | as `nfw` |
+| `sis` | singular isothermal sphere | `mass_lz` (1e7), `y` (1.0) |
+| `cis` | cored isothermal sphere | `mass_lz` (1e7), `y` (1.0), `rc` (0.05) |
+| `lookup` | interpolated GWLENS HDF5 table | `table_path` (required), `mass_lz` (1e7), `y` (1.0) |
+
+`mass_lz` is the redshifted lens mass in M<sub>sun</sub> and `y` the impact parameter in Einstein-radius units. Unknown parameter names raise an error. The older `"nfw:1e9"` / `"halo:1e9"` strings still work. To add your own lens:
+
+```python
+@L.register_lens("mylens", dict(mass_lz=1e7, y=1.0, alpha=0.5))
+class MyLens:
+    def __init__(self, mass_lz, y, alpha): ...
+    def amplification(self, f): ...          # complex F(f), f in Hz
+```
 
 ## Usage
 
