@@ -31,10 +31,26 @@ if _GWLENS and os.path.isdir(_GWLENS) and _GWLENS not in sys.path:
 W_CONST = 8 * np.pi * G * MSUN / C**3     # w = W_CONST * M_Lz[Msun] * f
 
 
+def solver_kw():
+    """Keyword arguments for every GWLENS Solver1D call.
+
+    time_origin=None keeps the solvers in the same time convention as the analytic point mass
+    (gwlens.lens.point.F_analytic).  gwlens >= 0.2.2 defaults to time_origin='first_image', which
+    would give solver lenses (nfw, halo, sis, cis) a different, lens-dependent time origin from 'pm'.
+    """
+    import inspect
+    from gwlens.solver import solver1d as S1
+    kw = dict(S1.PE_SETTINGS)
+    if "time_origin" in inspect.signature(S1.Solver1D.__init__).parameters:   # older gwlens: no option
+        kw["time_origin"] = None
+    return kw
+
+
 class PointMassLens:
     """Point-mass lens, exact F(w, y) (Takahashi & Nakamura 2003) from gwlens.lens.point.
 
-    F is evaluated on a uniform w grid (spacing `dw`) and spline-interpolated.
+    F is evaluated on log-spaced knots below w = 1 and a uniform grid (spacing `dw`) above,
+    then spline-interpolated.
     """
 
     def __init__(self, mass_lz, y, dw=0.05):
@@ -46,7 +62,12 @@ class PointMassLens:
     def amplification(self, f):
         from gwlens.lens.point import F_analytic
         w = self.w(f)
-        grid = np.arange(max(w.min() - 2 * self.dw, 1e-3), w.max() + 2 * self.dw, self.dw)
+        lo, hi = 0.9 * w.min(), w.max() + 2 * self.dw
+        # log-spaced knots below w = 1 (F varies on scale ~w there), uniform spacing dw above
+        grid = np.arange(1.0, max(hi, 1.0 + 2 * self.dw), self.dw)
+        if lo < 1.0:
+            n_log = max(16, int(np.ceil(60 * np.log10(1.0 / lo))))
+            grid = np.concatenate([np.geomspace(lo, 1.0, n_log, endpoint=False), grid])
         vals = np.array([F_analytic(wi, self.y) for wi in grid])
         return CubicSpline(grid, vals.real)(w) + 1j * CubicSpline(grid, vals.imag)(w)
 
@@ -80,9 +101,10 @@ class PMInHaloLens1D:
 
     Dimensionless variables are the *point-mass* ones, so a vanishing halo recovers PointMassLens:
         w = W_CONST * mass_lz * f,   x = xi / xi0(mass_lz),   y in units of xi0(mass_lz).
-    Potential psi(x) = ln x + psi0 * NFW(k x), with the repo's convention (scripts/Compositecontour.py,
-    psi0_NFW = M_halo/M_PM when xi0 is built from M_halo):
-        psi0 = (1 + zl) * halo_mass / mass_lz,   k = xi0 / r_s,
+    Potential psi(x) = ln x + psi0 * NFW(k x), with gwlens' NFW(v) = [ln^2(v/2) + arccos^2(1/v)] / 2,
+    whose deflection is psi0 * g(v) / x.  Matching the projected NFW mass 4 pi rho_s r_s^3 g(v) with
+    4 pi rho_s r_s^3 = M_200 / m(c), m(c) = ln(1 + c) - c / (1 + c), gives
+        psi0 = (1 + zl) * halo_mass / (m(c_200) * mass_lz),   k = xi0 / r_s,
         xi0 = sqrt(4 G d_eff mass_lz) / c,       d_eff = D_L D_LS / ((1+zl) D_S).
     r_s = R_200 / c_200 with 200*rho_crit(zl) and c_200 = 8/(1+zl) (M h/1e14)^-0.13 (as in Compositecontour.py).
     ASSUMPTIONS: point mass exactly at the halo centre; mass_lz is the redshifted PM mass; halo_mass is the
@@ -95,8 +117,10 @@ class PMInHaloLens1D:
         self.conc = conc
         self.d_eff = self._d_eff(zl, zs)
         self.xi0 = np.sqrt(4 * G * self.d_eff * mass_lz * MSUN) / C
+        self.c200 = self.conc or 8 / (1 + zl) * (halo_mass * 0.7 / 1e14) ** (-0.13)
         self.xs = self._r_s() / self.xi0
-        self.psi0 = (1 + zl) * halo_mass / mass_lz
+        self.m_c = np.log1p(self.c200) - self.c200 / (1 + self.c200)
+        self.psi0 = (1 + zl) * halo_mass / (self.m_c * mass_lz)
 
     @classmethod
     def _d_eff(cls, zl, zs):
@@ -107,7 +131,7 @@ class PMInHaloLens1D:
         return d_l * d_ls / ((1 + zl) * d_s)
 
     def _r_s(self):
-        c200 = self.conc or 8 / (1 + self.zl) * (self.halo_mass * 0.7 / 1e14) ** (-0.13)
+        c200 = self.c200
         h_z = self.H0 * np.sqrt(self.OM * (1 + self.zl) ** 3 + self.OL)
         rho_c = 3 * h_z ** 2 / (8 * np.pi * G)
         r200 = (3 * self.halo_mass * MSUN / (4 * np.pi * self.DELTA * rho_c)) ** (1 / 3)
@@ -117,7 +141,7 @@ class PMInHaloLens1D:
         from gwlens.solver import solver1d as S1
         w = W_CONST * self.mass_lz * np.asarray(f)
         pot = S1.point_mass(1.0) + S1.nfw(k=1.0 / self.xs, psi0=self.psi0)
-        with S1.Solver1D(pot, y=self.y, wmin=w.min() * 0.99, wmax=w.max() * 1.01, **S1.PE_SETTINGS) as s:
+        with S1.Solver1D(pot, y=self.y, wmin=w.min() * 0.99, wmax=w.max() * 1.01, **solver_kw()) as s:
             return np.asarray(s.spectrum(w), dtype=complex)
 
 
@@ -131,7 +155,7 @@ class HaloOnlyLens1D(PMInHaloLens1D):
         from gwlens.solver import solver1d as S1
         w = W_CONST * self.mass_lz * np.asarray(f)
         pot = S1.nfw(k=1.0 / self.xs, psi0=self.psi0)
-        with S1.Solver1D(pot, y=self.y, wmin=w.min() * 0.99, wmax=w.max() * 1.01, **S1.PE_SETTINGS) as s:
+        with S1.Solver1D(pot, y=self.y, wmin=w.min() * 0.99, wmax=w.max() * 1.01, **solver_kw()) as s:
             return np.asarray(s.spectrum(w), dtype=complex)
 
 
@@ -147,7 +171,7 @@ class IsothermalLens1D:
         from gwlens.solver import solver1d as S1
         w = W_CONST * self.mass_lz * np.asarray(f)
         pot = S1.sis(1.0) if self.rc == 0 else S1.cis(1.0, self.rc)
-        with S1.Solver1D(pot, y=self.y, wmin=w.min() * 0.99, wmax=w.max() * 1.01, **S1.PE_SETTINGS) as s:
+        with S1.Solver1D(pot, y=self.y, wmin=w.min() * 0.99, wmax=w.max() * 1.01, **solver_kw()) as s:
             return np.asarray(s.spectrum(w), dtype=complex)
 
 

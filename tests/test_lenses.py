@@ -99,12 +99,43 @@ def test_lensed_mbhb_accepts_name_and_config():
     assert isinstance(L.LensedMBHB(p, "pm").lens, L.PointMassLens)
 
 
+def test_solver_lenses_use_point_mass_time_convention():
+    """Solver lenses must use time_origin=None, the convention of the analytic point mass."""
+    assert L.solver_kw().get("time_origin", None) is None
+
+
 def test_nfw_with_vanishing_halo_recovers_point_mass():
-    """|F| agrees; the 1D solver and F_analytic differ only by a time origin (linear phase)."""
-    f = np.linspace(2e-3, 1e-2, 12)
-    pm = L.get_lens("pm", y=1.0).amplification(f)
-    a = L.get_lens("nfw", halo_mass=1e3, y=1.0).amplification(f)
-    np.testing.assert_allclose(np.abs(a), np.abs(pm), rtol=5e-3)
-    ph = np.unwrap(np.angle(a / pm))
-    c = np.polyfit(f, ph, 1)
-    assert abs(c[1]) < 1e-2 and np.abs(ph - np.polyval(c, f)).max() < 1e-2
+    """Full complex F, not just |F|: a vanishing halo must give exactly the point mass."""
+    f = np.geomspace(2e-4, 1e-2, 15)
+    pm = L.get_lens("pm").amplification(f)
+    a = L.get_lens("nfw", halo_mass=1e-6).amplification(f)
+    np.testing.assert_allclose(a, pm, rtol=0, atol=1e-6)
+
+
+def test_point_mass_spline_matches_exact_at_small_w():
+    from gwlens.lens.point import F_analytic
+    w = np.geomspace(2e-3, 30, 120)
+    F = L.PointMassLens(1e7, 1.0).amplification(w / (L.W_CONST * 1e7))
+    np.testing.assert_allclose(F, [F_analytic(x, 1.0) for x in w], rtol=0, atol=1e-6)
+
+
+@pytest.mark.parametrize("halo_mass", [1e9, 1e11])
+def test_nfw_psi0_gives_the_halo_mass(halo_mass):
+    """Projected mass from the gwlens potential (x dpsi/dx) equals a direct integral of an NFW
+    density normalised so that the mass inside r200 is halo_mass (checks the 1/m(c) in psi0)."""
+    from scipy.integrate import quad
+    from gwlens.solver import solver1d as S1
+    from lisa_mbhb.constants import MSUN
+    lens = L.get_lens("nfw", halo_mass=halo_mass)
+    rs = lens.xs * lens.xi0
+    r200 = lens.c200 * rs
+    shape = lambda r: 1.0 / ((r / rs) * (1 + r / rs) ** 2)
+    rho_s = halo_mass * MSUN / quad(lambda r: 4 * np.pi * r * r * shape(r), 0, r200)[0]
+    sigma = lambda R: 2 * quad(lambda z: rho_s * shape(np.hypot(R, z)), 0, 200 * r200, limit=500)[0]
+    pot = S1.nfw(k=1 / lens.xs, psi0=lens.psi0)
+    m_ref = lens.mass_lz * MSUN / (1 + lens.zl)
+    x = lens.xs                                    # at R = r_s
+    m2d = quad(lambda R: 2 * np.pi * R * sigma(R), 0, x * lens.xi0, limit=200)[0]
+    h = 1e-5 * x
+    dpsi = (pot.real(x + h) - pot.real(x - h)) / (2 * h)
+    assert m2d / (m_ref * x * dpsi) == pytest.approx(1.0, rel=1e-4)

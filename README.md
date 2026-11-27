@@ -110,6 +110,10 @@ pytest
 
 The suite checks the noise/response implementation against PyCBC's analytical LISA PSDs, the sky-averaged SNR against a Monte-Carlo estimate, the point-mass lens against its analytic geometric-optics limit, and that lensing and mismatch behave as expected (e.g. mismatch decreases with increasing impact parameter).
 
+Lens checks: every solver lens uses the same time convention as the analytic point mass (an NFW lens with a vanishing halo reproduces the point-mass F to 1e-6 in the full complex F), and the NFW normalisation reproduces the halo's M200 from a direct integral of the density.
+
+Reproducibility: `tests/test_reproduce.py` regenerates the waveforms (h+, h× for IMRPhenomD/XHM/HM), TDI SNRs, approximant mismatches, lensed SNRs and F(f) of every lens, and compares them to `tests/data/reference.json` (relative tolerance 1e-9 for waveforms and SNRs) and to the published `figures/*.json`. The reference file records the library versions it was made with. Regenerate it only on purpose, with `python scripts/make_reference.py`.
+
 ## Contributors
 
 Ansal Kanu, Sreekanth Harikumar, Shashwat Singh
