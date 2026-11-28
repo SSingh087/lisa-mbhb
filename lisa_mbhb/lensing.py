@@ -31,18 +31,21 @@ if _GWLENS and os.path.isdir(_GWLENS) and _GWLENS not in sys.path:
 W_CONST = 8 * np.pi * G * MSUN / C**3     # w = W_CONST * M_Lz[Msun] * f
 
 
-def solver_kw():
-    """Keyword arguments for every GWLENS Solver1D call.
+def solver_kw(S=None, **extra):
+    """Keyword arguments for every GWLENS solver call: PE_SETTINGS of the solver module `S`
+    (default: gwlens.solver.solver1d; pass solver2d for Solver2D) updated with `extra`.
 
     time_origin=None keeps the solvers in the same time convention as the analytic point mass
     (gwlens.lens.point.F_analytic).  gwlens >= 0.2.2 defaults to time_origin='first_image', which
     would give solver lenses (nfw, halo, sis, cis) a different, lens-dependent time origin from 'pm'.
     """
     import inspect
-    from gwlens.solver import solver1d as S1
-    kw = dict(S1.PE_SETTINGS)
-    if "time_origin" in inspect.signature(S1.Solver1D.__init__).parameters:   # older gwlens: no option
-        kw["time_origin"] = None
+    if S is None:
+        from gwlens.solver import solver1d as S
+    kw = dict(getattr(S, "PE_SETTINGS", {}), **extra)
+    cls = getattr(S, "Solver1D", None) or getattr(S, "Solver2D")
+    if "time_origin" in inspect.signature(cls.__init__).parameters:   # older gwlens: no option
+        kw.setdefault("time_origin", None)
     return kw
 
 
