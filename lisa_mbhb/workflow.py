@@ -29,7 +29,7 @@ def lensed_snr_scan(params, mass_lz, ys, approximant="IMRPhenomD"):
     cfg = W.WaveformConfig(approximant=approximant, tc_ref=params["tc"])
     res = {}
     for y in ys:
-        s = L.LensedMBHB(params, L.PointMassLens(mass_lz, y), cfg)
+        s = L.LensedMBHB(params, L.get_lens("pm", mass_lz=mass_lz, y=y), cfg)
         hp, _, F = s.polarizations()
         res[y] = dict(sig=s, snr=s.snr(), snr_unlensed=s.snr(lensed=False), F=F, hp=hp)
     return res
@@ -43,7 +43,7 @@ def mismatch_grid(params, mass_lzs, ys, approximant="IMRPhenomD", cap=2501, verb
         max_dt, n_dt = demo.shift_range(M, cap=cap)
         vals = []
         for y in ys:
-            s = L.LensedMBHB(params, L.PointMassLens(M, y), cfg)
+            s = L.LensedMBHB(params, L.get_lens("pm", mass_lz=M, y=y), cfg)
             vals.append(s.mismatch(max_dt, n_dt))
             if verbose:
                 print(f"M_Lz={M:.0e} y={y}: mismatch={vals[-1]:.3e}", flush=True)

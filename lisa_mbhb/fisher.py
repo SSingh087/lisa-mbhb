@@ -10,7 +10,7 @@ Parameters
     MBH  : inference.SAMPLED  (log10_mchirp, q, spin1z, spin2z, log10_dl, cos_inc, coa_phase, psi,
                                ecl_lon, sin_ecl_lat, tc)
     lens : pm   -> log10_mlz, y           (lens redshift is NOT a parameter: zl = zl_frac * zs, fixed)
-           nfw  -> log10_mlz, y, log10_mhalo  (on-axis PM inside an NFW halo, lensing.PMInHaloLens1D)
+           nfw  -> log10_mlz, y, log10_mhalo  (on-axis PM inside an NFW halo, GWLENS Solver1D via lensing.get_lens)
            halo -> log10_mhalo, y             (the NFW halo alone; mass_lz only fixes the length unit)
 
     S = SourceDerivs(params)                       # one-off: 2*11 waveform evaluations
@@ -85,8 +85,10 @@ class LensSpec:
         return v
 
     def amplification(self, vals, f, zs, zl_frac=0.5):
-        spec = "pm" if self.kind == "pm" else f"{self.kind}:{float(10 ** vals['log10_mhalo'])!r}"
-        return L.make_lens(spec, 10 ** vals["log10_mlz"], vals["y"], zs, zl_frac).amplification(f)
+        p = dict(mass_lz=10 ** vals["log10_mlz"], y=vals["y"])
+        if self.kind != "pm":
+            p.update(halo_mass=float(10 ** vals["log10_mhalo"]), zs=zs, zl_frac=zl_frac)
+        return L.get_lens(self.kind, **p).amplification(f)
 
 
 CONC_CASES = ("c_fixed", "c_prior", "c_free")

@@ -22,7 +22,7 @@ Derived quantities (lisa_mbhb.fisher_lenses.derived; drawn dashed in the corner 
         C = -kappa y^2 / (2 (1-kappa)) + (a/2) ln(1-kappa);
     the amplitude is degenerate with D_L and the phase with t_c, so the invariant combinations are
         D_L (1-kappa),  y',  x_s',  gamma',  t_c - t_unit C   (t_unit = 4 G m_ref_z / c^3).
-Lens cosmology: flat LCDM H0=70, Om=0.3 (as PMInHaloLens1D).  GWLENS time_origin pinned to None (lensing.solver_kw).
+Lens cosmology: flat LCDM H0=70, Om=0.3 (lisa_mbhb.lensing units).  GWLENS time_origin pinned to None (lensing.solver_kw).
 """
 import numpy as np
 from scipy.optimize import brentq
@@ -40,8 +40,7 @@ STEPS = dict(log10_mlz=3e-4, log10_psi0=1e-3, log10_xs=1e-3, y=3e-4, kappa=1e-3,
 GAMMA_TRUE = (0.1 * np.cos(2 * np.pi / 8), 0.1 * np.sin(2 * np.pi / 8))   # |gamma| = 0.1 at 22.5 deg (both components non-zero)
 
 
-def m_of_c(c):
-    return np.log(1 + c) - c / (1 + c)
+m_of_c = L.m_of_c
 
 
 class FisherLens:
@@ -54,13 +53,11 @@ class FisherLens:
         self.steps = {n: STEPS[n] for n in self.names}
         self.priors = {}                                       # Fisher only: no priors
         self.solver_opts = dict(solver_opts or {})
-        CL = L.PMInHaloLens1D
-        self.d_eff = CL._d_eff(self.zl, self.zs)                                   # [m], includes 1/(1+z_L)
+        self.d_eff = L.d_eff(self.zl, self.zs)                                     # [m], includes 1/(1+z_L)
         self.xi0 = np.sqrt(4 * G * self.d_eff * self.m_ref_z * MSUN) / C          # [m]
         self.m_ref_phys = self.m_ref_z / (1 + self.zl)                             # [Msun]
         self.sigma_cr_xi0sq = self.m_ref_phys * MSUN / np.pi                       # Sigma_cr * xi0^2 [kg]
-        hz = CL.H0 * np.sqrt(CL.OM * (1 + self.zl) ** 3 + CL.OL)
-        self.rho_crit = 3 * hz ** 2 / (8 * np.pi * G)                              # [kg m^-3]
+        self.rho_crit = L.rho_crit(self.zl)                                        # [kg m^-3]
         self.t_unit = 4 * G * self.m_ref_z * MSUN / C ** 3                         # [s]; w = 2 pi f t_unit
 
     # ---------- units ----------
@@ -69,8 +66,8 @@ class FisherLens:
 
     # ---------- truth from physical halo ----------
     def halo_params(self, m200, c200=None):
-        """(log10_psi0, log10_xs) of a halo of physical M200 [Msun] (c200 default: the mean M-c relation of lensing.PMInHaloLens1D)."""
-        c = c200 or 8 / (1 + self.zl) * (m200 * 0.7 / 1e14) ** (-0.13)
+        """(log10_psi0, log10_xs) of a halo of physical M200 [Msun] (c200 default: the mean M-c relation lensing.c200_mean)."""
+        c = c200 or L.c200_mean(m200, self.zl)
         r200 = (3 * m200 * MSUN / (4 * np.pi * 200 * self.rho_crit)) ** (1 / 3)
         rs = r200 / c; xs = rs / self.xi0
         psi0 = m200 / (m_of_c(c) * self.m_ref_phys)            # = 4 kappa_s x_s^2

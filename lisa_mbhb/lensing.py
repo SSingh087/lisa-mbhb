@@ -1,25 +1,31 @@
-"""Lensed MBHB waveforms: wave-optics amplification factors from GWLENS applied to
-the LISA MBHB signal.
+"""Lensed MBHB signals.  All lensing is computed by the GWLENS solvers
+(``gwlens.solver.solver1d.Solver1D`` / ``gwlens.solver.solver2d.Solver2D``).
 
-    lens = get_lens("pm", mass_lz=1e6, y=0.5)         # by name; unset parameters use defaults
-    lens = get_lens({"name": "nfw", "halo_mass": 1e11, "zs": 2.0})   # or from a config dict
-    sig  = LensedMBHB(params, lens)                    # lens may also be a name or a config dict
-    hp, hc, F = sig.polarizations()                    # lensed h+, hx and F(f) on sig.f
-    tdi = sig.tdi()                                    # lensed A, E, T
-    sig.snr(lensed=False), sig.snr()                   # unlensed vs lensed SNR
+This module only does what GWLENS does not:
+  1. units: GWLENS works in dimensionless w, x, y; here f [Hz] -> w = W_CONST * mass_lz * f, and a
+     physical NFW halo (M200, z_L, z_S) -> GWLENS's (psi0, x_s)  (``nfw_units``);
+  2. solver settings: every solver call uses ``solver_kw()`` (PE_SETTINGS, time_origin=None);
+  3. the LISA signal: ``LensedMBHB`` applies F(f) to the TDI response.
 
-``available_lenses()`` lists every lens name with its parameters and defaults.
-Lens classes only need an ``amplification(f)`` method returning the complex F(f)
-for GW frequencies f [Hz] (detector frame, lens mass redshifted).
-GWLENS (``gwlens`` on PyPI, >=0.2.2) is a regular dependency. To use a local GWLENS
-checkout instead, set the GWLENS_PATH environment variable to its root directory.
+    from gwlens.solver import solver1d as S1
+    lens = Lens(S1.point_mass(1.0) + S1.sis(0.2), y=0.5, mass_lz=1e7)   # any GWLENS potential
+    lens = get_lens("nfw", halo_mass=1e11, zs=2.0)                      # or a named one (defaults for the rest)
+    lens = get_lens({"name": "pm", "y": 0.3})                           # or a config dict
+    sig  = LensedMBHB(params, lens)                                     # lens may also be a name / config dict
+
+Units: x and y are in units of xi0, the Einstein radius of a point mass `mass_lz` (redshifted,
+Msun), for every lens, so different lenses compare point by point.  ``available_lenses()`` lists
+the named lenses with their parameters and defaults.
+
+GWLENS (``gwlens`` on PyPI) is a regular dependency.  To use a local GWLENS checkout instead,
+set the GWLENS_PATH environment variable to its root directory.
 """
+import inspect
 import os
 import sys
 
 import numpy as np
 from scipy.integrate import quad
-from scipy.interpolate import CubicSpline, RectBivariateSpline
 
 from . import inference, overlap, waveform
 from .constants import C, G, MSUN, MPC
@@ -30,16 +36,62 @@ if _GWLENS and os.path.isdir(_GWLENS) and _GWLENS not in sys.path:
 
 W_CONST = 8 * np.pi * G * MSUN / C**3     # w = W_CONST * M_Lz[Msun] * f
 
+# ------------------------------------------------------------------ units (physical -> GWLENS)
+H0, OM, OL, DELTA = 70e3 / MPC, 0.3, 0.7, 200     # flat LCDM; halo overdensity 200 x rho_crit(z_L)
 
+
+def _hubble(z):
+    return H0 * np.sqrt(OM * (1 + z) ** 3 + OL)
+
+
+def d_eff(zl, zs):
+    """D_L D_LS / ((1 + z_L) D_S) [m], so that xi0^2 = 4 G d_eff M_Lz / c^2 with the redshifted mass."""
+    dc = lambda a, b: C * quad(lambda z: 1 / _hubble(z), a, b)[0]
+    d_l, d_s, d_ls = dc(0, zl) / (1 + zl), dc(0, zs) / (1 + zs), dc(zl, zs) / (1 + zs)
+    return d_l * d_ls / ((1 + zl) * d_s)
+
+
+def xi0(mass_lz, zl, zs):
+    """Einstein radius [m] of a point mass of redshifted mass mass_lz [Msun]."""
+    return np.sqrt(4 * G * d_eff(zl, zs) * mass_lz * MSUN) / C
+
+
+def rho_crit(z):
+    return 3 * _hubble(z) ** 2 / (8 * np.pi * G)
+
+
+def m_of_c(c):
+    return np.log1p(c) - c / (1 + c)
+
+
+def c200_mean(halo_mass, zl):
+    """Mean concentration-mass relation c_200 = 8/(1+z_L) (M200 h / 1e14 Msun)^-0.13."""
+    return 8 / (1 + zl) * (halo_mass * 0.7 / 1e14) ** (-0.13)
+
+
+def nfw_units(halo_mass, mass_lz, zl, zs, conc=None):
+    """GWLENS NFW parameters of a halo of physical M200 = halo_mass [Msun], in the units of a point
+    mass mass_lz:  psi(x) = psi0 * NFW(x / x_s),  GWLENS NFW(v) = [ln^2(v/2) + arccos^2(1/v)] / 2.
+
+    x_s = r_s / xi0(mass_lz),  r_s = R_200 / c_200,
+    psi0 = (1 + z_L) M200 / (m(c_200) mass_lz)   (projected mass of the halo = M200 g(v) / m(c)).
+    Returns dict(psi0, xs, c200, m_c).
+    """
+    c = conc or c200_mean(halo_mass, zl)
+    r200 = (3 * halo_mass * MSUN / (4 * np.pi * DELTA * rho_crit(zl))) ** (1 / 3)
+    m_c = m_of_c(c)
+    return dict(psi0=(1 + zl) * halo_mass / (m_c * mass_lz), xs=(r200 / c) / xi0(mass_lz, zl, zs), c200=c, m_c=m_c)
+
+
+# ------------------------------------------------------------------ GWLENS solver
 def solver_kw(S=None, **extra):
     """Keyword arguments for every GWLENS solver call: PE_SETTINGS of the solver module `S`
     (default: gwlens.solver.solver1d; pass solver2d for Solver2D) updated with `extra`.
 
-    time_origin=None keeps the solvers in the same time convention as the analytic point mass
+    time_origin=None keeps every lens in the same time convention as the analytic point mass
     (gwlens.lens.point.F_analytic).  gwlens >= 0.2.2 defaults to time_origin='first_image', which
-    would give solver lenses (nfw, halo, sis, cis) a different, lens-dependent time origin from 'pm'.
+    gives each lens a different, lens-dependent time origin.
     """
-    import inspect
     if S is None:
         from gwlens.solver import solver1d as S
     kw = dict(getattr(S, "PE_SETTINGS", {}), **extra)
@@ -49,145 +101,53 @@ def solver_kw(S=None, **extra):
     return kw
 
 
-class PointMassLens:
-    """Point-mass lens, exact F(w, y) (Takahashi & Nakamura 2003) from gwlens.lens.point.
+def _is_gwlens_potential(obj):
+    from gwlens.solver import solver1d as S1, solver2d as S2
+    return isinstance(obj, (S1.Potential, S2.Lens))
 
-    F is evaluated on log-spaced knots below w = 1 and a uniform grid (spacing `dw`) above,
-    then spline-interpolated.
-    """
 
-    def __init__(self, mass_lz, y, dw=0.05):
-        self.mass_lz, self.y, self.dw = mass_lz, y, dw
+class Lens:
+    """A GWLENS lens: `potential` is a solver1d Potential (axisymmetric, on-axis source y) or a
+    solver2d Lens (e.g. with external shear; y = (y1, y2) or y1).  `mass_lz` [Msun] sets the units:
+    w = W_CONST * mass_lz * f, x and y in units of xi0(mass_lz).  `solver_opts` override solver_kw().
+    `info` holds the physical parameters a named lens was built from."""
+
+    def __init__(self, potential, y, mass_lz, info=None, **solver_opts):
+        from gwlens.solver import solver2d as S2
+        self.potential, self.y, self.mass_lz = potential, y, float(mass_lz)
+        self.two_d = isinstance(potential, S2.Lens)
+        self.info, self.solver_opts = dict(info or {}), solver_opts
 
     def w(self, f):
-        return W_CONST * self.mass_lz * np.asarray(f)
+        return W_CONST * self.mass_lz * np.asarray(f, dtype=float)
 
     def amplification(self, f):
-        from gwlens.lens.point import F_analytic
+        """Complex F(f) for GW frequencies f [Hz] (detector frame)."""
         w = self.w(f)
-        lo, hi = 0.9 * w.min(), w.max() + 2 * self.dw
-        # log-spaced knots below w = 1 (F varies on scale ~w there), uniform spacing dw above
-        grid = np.arange(1.0, max(hi, 1.0 + 2 * self.dw), self.dw)
-        if lo < 1.0:
-            n_log = max(16, int(np.ceil(60 * np.log10(1.0 / lo))))
-            grid = np.concatenate([np.geomspace(lo, 1.0, n_log, endpoint=False), grid])
-        vals = np.array([F_analytic(wi, self.y) for wi in grid])
-        return CubicSpline(grid, vals.real)(w) + 1j * CubicSpline(grid, vals.imag)(w)
-
-
-class LookupTableLens:
-    """Any lens with a GWLENS HDF5 table (keys w_values, y_values, results[w, y, (re, im)]),
-    e.g. NFW or composite lenses made with `gwlens_interpolate`.
-
-    w_of_f : callable f[Hz] -> dimensionless frequency w for this lens
-             (e.g. gwlens.tools.halo.NFW(...).Dimensionless_Frequency).
-    """
-
-    def __init__(self, table_path, w_of_f, y):
-        import h5py
-        with h5py.File(table_path, "r") as h:
-            w, yv, res = h["w_values"][:], h["y_values"][:], h["results"][:]
-        self.re = RectBivariateSpline(w, yv, res[:, :, 0], kx=3, ky=3)
-        self.im = RectBivariateSpline(w, yv, res[:, :, 1], kx=3, ky=3)
-        self.wlim, self.ylim = (w[0], w[-1]), (yv[0], yv[-1])
-        self.w_of_f, self.y = w_of_f, y
-
-    def amplification(self, f):
-        w = np.clip(self.w_of_f(np.asarray(f)), *self.wlim)
-        y = float(np.clip(self.y, *self.ylim))
-        return self.re.ev(w, y) + 1j * self.im.ev(w, y)
-
-
-class PMInHaloLens1D:
-    """On-axis point mass embedded in an NFW halo (GWLENS 1D solver, axisymmetric).
-    Used by lisa_mbhb.fisher, which needs fast on-axis lenses for finite-difference derivatives.
-
-    Dimensionless variables are the *point-mass* ones, so a vanishing halo recovers PointMassLens:
-        w = W_CONST * mass_lz * f,   x = xi / xi0(mass_lz),   y in units of xi0(mass_lz).
-    Potential psi(x) = ln x + psi0 * NFW(k x), with gwlens' NFW(v) = [ln^2(v/2) + arccos^2(1/v)] / 2,
-    whose deflection is psi0 * g(v) / x.  Matching the projected NFW mass 4 pi rho_s r_s^3 g(v) with
-    4 pi rho_s r_s^3 = M_200 / m(c), m(c) = ln(1 + c) - c / (1 + c), gives
-        psi0 = (1 + zl) * halo_mass / (m(c_200) * mass_lz),   k = xi0 / r_s,
-        xi0 = sqrt(4 G d_eff mass_lz) / c,       d_eff = D_L D_LS / ((1+zl) D_S).
-    r_s = R_200 / c_200 with 200*rho_crit(zl) and c_200 = 8/(1+zl) (M h/1e14)^-0.13 (as in Compositecontour.py).
-    ASSUMPTIONS: point mass exactly at the halo centre; mass_lz is the redshifted PM mass; halo_mass is the
-    physical M_200 in Msun; flat LCDM H0=70, Om=0.3.
-    """
-    H0, OM, OL, DELTA = 70e3 / MPC, 0.3, 0.7, 200
-
-    def __init__(self, mass_lz, y, halo_mass, zl, zs, conc=None):
-        self.mass_lz, self.y, self.halo_mass, self.zl, self.zs = mass_lz, y, halo_mass, zl, zs
-        self.conc = conc
-        self.d_eff = self._d_eff(zl, zs)
-        self.xi0 = np.sqrt(4 * G * self.d_eff * mass_lz * MSUN) / C
-        self.c200 = self.conc or 8 / (1 + zl) * (halo_mass * 0.7 / 1e14) ** (-0.13)
-        self.xs = self._r_s() / self.xi0
-        self.m_c = np.log1p(self.c200) - self.c200 / (1 + self.c200)
-        self.psi0 = (1 + zl) * halo_mass / (self.m_c * mass_lz)
-
-    @classmethod
-    def _d_eff(cls, zl, zs):
-        E = lambda z: np.sqrt(cls.OM * (1 + z) ** 3 + cls.OL)
-        dh = C / cls.H0
-        dc = lambda a, b: dh * quad(lambda z: 1 / E(z), a, b)[0]
-        d_l, d_s, d_ls = dc(0, zl) / (1 + zl), dc(0, zs) / (1 + zs), dc(zl, zs) / (1 + zs)
-        return d_l * d_ls / ((1 + zl) * d_s)
-
-    def _r_s(self):
-        c200 = self.c200
-        h_z = self.H0 * np.sqrt(self.OM * (1 + self.zl) ** 3 + self.OL)
-        rho_c = 3 * h_z ** 2 / (8 * np.pi * G)
-        r200 = (3 * self.halo_mass * MSUN / (4 * np.pi * self.DELTA * rho_c)) ** (1 / 3)
-        return r200 / c200
-
-    def amplification(self, f):
-        from gwlens.solver import solver1d as S1
-        w = W_CONST * self.mass_lz * np.asarray(f)
-        pot = S1.point_mass(1.0) + S1.nfw(k=1.0 / self.xs, psi0=self.psi0)
-        with S1.Solver1D(pot, y=self.y, wmin=w.min() * 0.99, wmax=w.max() * 1.01, **solver_kw()) as s:
+        if self.two_d:
+            from gwlens.solver import solver2d as S
+            y = tuple(np.atleast_1d(self.y).astype(float)) if np.ndim(self.y) else (float(self.y), 0.0)
+            Solver, kw = S.Solver2D, solver_kw(S, **{"y_radius": 0.0, **self.solver_opts})
+        else:
+            from gwlens.solver import solver1d as S
+            y, Solver, kw = float(self.y), S.Solver1D, solver_kw(S, **self.solver_opts)
+        with Solver(self.potential, y=y, wmin=w.min() * 0.99, wmax=w.max() * 1.01, **kw) as s:
             return np.asarray(s.spectrum(w), dtype=complex)
 
-
-class HaloOnlyLens1D(PMInHaloLens1D):
-    """The NFW halo ALONE (no central point mass), in exactly the same normalisation as
-    PMInHaloLens1D (w, x, y and psi0 defined through the reference mass `mass_lz`), so it compares
-    point by point with the composite at the same (mass_lz, y).  `mass_lz` is then only a unit
-    choice (xi0 = Einstein radius of a point mass mass_lz)."""
-
-    def amplification(self, f):
-        from gwlens.solver import solver1d as S1
-        w = W_CONST * self.mass_lz * np.asarray(f)
-        pot = S1.nfw(k=1.0 / self.xs, psi0=self.psi0)
-        with S1.Solver1D(pot, y=self.y, wmin=w.min() * 0.99, wmax=w.max() * 1.01, **solver_kw()) as s:
-            return np.asarray(s.spectrum(w), dtype=complex)
+    def __repr__(self):
+        return f"Lens({self.potential!r}, y={self.y}, mass_lz={self.mass_lz:g}{', ' + repr(self.info) if self.info else ''})"
 
 
-class IsothermalLens1D:
-    """Singular (rc = 0) or cored (rc > 0) isothermal sphere, GWLENS 1D solver, on axis.
-    Units: xi0 is the SIS Einstein radius and mass_lz the redshifted mass inside it, so
-    w = W_CONST * mass_lz * f as for the point mass; rc is the core radius in units of xi0."""
-
-    def __init__(self, mass_lz, y, rc=0.0):
-        self.mass_lz, self.y, self.rc = mass_lz, y, rc
-
-    def amplification(self, f):
-        from gwlens.solver import solver1d as S1
-        w = W_CONST * self.mass_lz * np.asarray(f)
-        pot = S1.sis(1.0) if self.rc == 0 else S1.cis(1.0, self.rc)
-        with S1.Solver1D(pot, y=self.y, wmin=w.min() * 0.99, wmax=w.max() * 1.01, **solver_kw()) as s:
-            return np.asarray(s.spectrum(w), dtype=complex)
-
-
-# ------------------------------------------------------------------ lens registry
+# ------------------------------------------------------------------ named lenses (GWLENS potentials)
 _REQUIRED = object()      # marks a parameter with no default
 
 
 class LensType:
-    """A named lens: `factory(**params)` builds the lens object; `defaults` maps every parameter
-    to its default value (or to _REQUIRED if it must be given)."""
+    """A named lens: `build(**params)` returns a Lens; `defaults` maps every parameter to its
+    default value (or to _REQUIRED if it must be given)."""
 
-    def __init__(self, name, factory, defaults, doc=""):
-        self.name, self.factory, self.defaults, self.doc = name, factory, dict(defaults), doc
+    def __init__(self, name, build, defaults, doc=""):
+        self.name, self.build, self.defaults, self.doc = name, build, dict(defaults), doc
 
     def resolve(self, params):
         unknown = set(params) - set(self.defaults)
@@ -201,7 +161,7 @@ class LensType:
         return out
 
     def __call__(self, **params):
-        return self.factory(**self.resolve(params))
+        return self.build(**self.resolve(params))
 
     def __repr__(self):
         d = {k: ("<required>" if v is _REQUIRED else v) for k, v in self.defaults.items()}
@@ -212,57 +172,86 @@ LENSES = {}
 
 
 def register_lens(name, defaults, doc="", aliases=()):
-    """Register a lens under `name` (and `aliases`).  Use as a decorator on a function or class
-    taking the parameters in `defaults` as keyword arguments and returning an object with
-    ``amplification(f)``."""
-    def deco(factory):
-        t = LensType(name, factory, defaults, doc or (factory.__doc__ or "").strip().split("\n")[0])
+    """Register a named lens.  Decorate a function taking the parameters in `defaults` as keyword
+    arguments and returning a Lens (or any object with ``amplification(f)``)."""
+    def deco(build):
+        t = LensType(name, build, defaults, doc or (build.__doc__ or "").strip().split("\n")[0])
         for n in (name, *aliases):
             LENSES[n] = t
-        return factory
+        return build
     return deco
+
+
+def _S1():
+    from gwlens.solver import solver1d as S1
+    return S1
+
+
+@register_lens("pm", dict(mass_lz=1e7, y=1.0), aliases=("point", "point_mass"))
+def _pm(mass_lz, y):
+    """point mass"""
+    return Lens(_S1().point_mass(1.0), y, mass_lz)
+
+
+@register_lens("sis", dict(mass_lz=1e7, y=1.0))
+def _sis(mass_lz, y):
+    """singular isothermal sphere (mass_lz = mass inside its Einstein radius)"""
+    return Lens(_S1().sis(1.0), y, mass_lz)
+
+
+@register_lens("cis", dict(mass_lz=1e7, y=1.0, rc=0.05))
+def _cis(mass_lz, y, rc):
+    """cored isothermal sphere (core radius rc in units of xi0)"""
+    return Lens(_S1().cis(1.0, rc), y, mass_lz)
 
 
 _HALO_DEFAULTS = dict(mass_lz=1e7, y=1.0, halo_mass=1e11, zs=1.0, zl_frac=0.5, conc=None)
 
 
-def _halo(cls):
-    def build(mass_lz, y, halo_mass, zs, zl_frac, conc):
-        return cls(mass_lz, y, halo_mass, zl_frac * zs, zs, conc)
-    return build
+def _halo_lens(with_pm, mass_lz, y, halo_mass, zs, zl_frac, conc):
+    S1, zl = _S1(), zl_frac * zs
+    u = nfw_units(halo_mass, mass_lz, zl, zs, conc)
+    pot = S1.nfw(k=1.0 / u["xs"], psi0=u["psi0"])
+    if with_pm:
+        pot = S1.point_mass(1.0) + pot
+    return Lens(pot, y, mass_lz, info=dict(halo_mass=halo_mass, zl=zl, zs=zs, **u))
 
 
-register_lens("pm", dict(mass_lz=1e7, y=1.0, dw=0.05), "point mass, exact F(w, y)",
-              aliases=("point", "point_mass"))(PointMassLens)
-register_lens("nfw", _HALO_DEFAULTS, "point mass at the centre of an NFW halo (M200 = halo_mass, zl = zl_frac * zs)",
-              aliases=("pm_nfw",))(_halo(PMInHaloLens1D))
-register_lens("halo", _HALO_DEFAULTS, "NFW halo alone, in the point-mass units of mass_lz",
-              aliases=("nfw_only",))(_halo(HaloOnlyLens1D))
-register_lens("sis", dict(mass_lz=1e7, y=1.0), "singular isothermal sphere")(
-    lambda mass_lz, y: IsothermalLens1D(mass_lz, y, 0.0))
-register_lens("cis", dict(mass_lz=1e7, y=1.0, rc=0.05), "cored isothermal sphere (rc in units of xi0)")(IsothermalLens1D)
-register_lens("lookup", dict(table_path=_REQUIRED, mass_lz=1e7, y=1.0),
-              "interpolated GWLENS HDF5 table, w = W_CONST * mass_lz * f")(
-    lambda table_path, mass_lz, y: LookupTableLens(table_path, lambda f: W_CONST * mass_lz * np.asarray(f), y))
+@register_lens("nfw", _HALO_DEFAULTS, aliases=("pm_nfw",))
+def _nfw(**p):
+    """point mass mass_lz at the centre of an NFW halo of M200 = halo_mass (z_L = zl_frac * zs)"""
+    return _halo_lens(True, **p)
+
+
+@register_lens("halo", _HALO_DEFAULTS, aliases=("nfw_only",))
+def _halo(**p):
+    """NFW halo alone, in the units of a point mass mass_lz (mass_lz is then only the unit)"""
+    return _halo_lens(False, **p)
 
 
 def available_lenses():
-    """{name: {parameter: default}} for every registered lens (aliases included)."""
+    """{name: {parameter: default}} for every named lens (aliases included)."""
     return {n: {k: ("<required>" if v is _REQUIRED else v) for k, v in t.defaults.items()}
             for n, t in sorted(LENSES.items())}
 
 
 def get_lens(lens="pm", **params):
-    """Build a lens from a name, a config dict or a ready lens object.
+    """A lens from a name, a config dict, a GWLENS potential, or a ready lens object.
 
         get_lens("pm")                                    # all defaults
         get_lens("nfw", halo_mass=1e9, zs=2.0)            # override some parameters
         get_lens({"name": "halo", "halo_mass": 1e9})      # config dict (e.g. from JSON / YAML)
-        get_lens("nfw:1e9", mass_lz=1e7, y=0.5)           # legacy 'kind:<M200>' spec
+        get_lens("nfw:1e9", mass_lz=1e7, y=0.5)           # 'kind:<M200>' spec
+        get_lens(S1.point_mass(1.0) + S1.sis(0.3), y=0.5, mass_lz=1e7)   # any GWLENS potential
 
     Keyword arguments override values in a config dict.  Unknown parameter names raise
     ValueError, so typos do not silently fall back to defaults.
     """
+    if _is_gwlens_potential(lens):
+        unknown = set(params) - {"y", "mass_lz"}
+        if unknown:
+            raise ValueError(f"a GWLENS potential takes only y and mass_lz, not {sorted(unknown)}")
+        return Lens(lens, params.get("y", 1.0), params.get("mass_lz", 1e7))
     if hasattr(lens, "amplification"):
         if params:
             raise ValueError("parameters cannot be applied to an already built lens object")
@@ -276,25 +265,15 @@ def get_lens(lens="pm", **params):
     elif isinstance(lens, str):
         name = lens
         kind, sep, mh = lens.partition(":")
-        if sep:                                        # legacy 'nfw:1e9' / 'halo:1e9'
+        if sep:                                        # 'nfw:1e9' / 'halo:1e9'
             if kind not in ("nfw", "halo") or not mh:
                 raise ValueError(f"bad lens spec {lens!r}; use 'pm', 'nfw:<M200>' or 'halo:<M200>'")
             name, params = kind, {"halo_mass": float(mh), **params}
     else:
-        raise TypeError("lens must be a name, a config dict or an object with amplification(f)")
+        raise TypeError("lens must be a name, a config dict, a GWLENS potential or an object with amplification(f)")
     if name not in LENSES:
         raise ValueError(f"unknown lens {name!r}; available: {', '.join(sorted(LENSES))}")
     return LENSES[name](**params)
-
-
-def make_lens(spec, mass_lz, y, zs, zl_frac=0.5):
-    """On-axis lens for lisa_mbhb.fisher (kept for backward compatibility; see get_lens).
-    spec: 'pm' | 'nfw:<M200 Msun>' (PM inside an NFW halo) | 'halo:<M200 Msun>' (halo alone)."""
-    if spec in ("pm", "point", "point_mass"):
-        return get_lens("pm", mass_lz=mass_lz, y=y)
-    if ":" not in spec:
-        raise ValueError(f"bad lens spec {spec!r}; use 'pm', 'nfw:<M200>' (point mass + halo) or 'halo:<M200>' (halo only)")
-    return get_lens(spec, mass_lz=mass_lz, y=y, zs=zs, zl_frac=zl_frac)
 
 
 class LensedMBHB:

@@ -28,15 +28,15 @@ def test_mass_sheet_identity(model):
 
 
 def test_halo_roundtrip_and_normalisation():
-    """(M200, c) -> (psi0, x_s) -> (M200, c), and psi0 equals lensing.PMInHaloLens1D (fixed m(c) normalisation) when m_ref = BH mass."""
+    """(M200, c) -> (psi0, x_s) -> (M200, c), and psi0, x_s equal lensing.nfw_units (fixed m(c) normalisation) when m_ref = BH mass."""
     Lm = FisherLens("pmlnfw", MREF, ZS)
     for m200 in (1e9, 1e11):
         lp, lx = Lm.halo_params(m200)
         m, c = Lm.halo_physical(lp, lx)
         assert abs(m / m200 - 1) < 1e-8
-        cl = L.PMInHaloLens1D(MREF, 1.0, m200, Lm.zl, ZS)
-        assert abs(10 ** lp / cl.psi0 - 1) < 1e-10 and abs(10 ** lx / cl.xs - 1) < 1e-10
-        assert abs(c / cl.c200 - 1) < 1e-8
+        u = L.nfw_units(m200, MREF, Lm.zl, ZS)
+        assert abs(10 ** lp / u["psi0"] - 1) < 1e-10 and abs(10 ** lx / u["xs"] - 1) < 1e-10
+        assert abs(c / u["c200"] - 1) < 1e-8
 
 
 def test_tiny_halo_is_pml():
