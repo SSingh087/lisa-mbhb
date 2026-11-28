@@ -80,7 +80,9 @@ def test_lensed_snr_reproduces_reference_and_published(params):
     for y in ys:
         assert scan[y]["snr_unlensed"] == pytest.approx(r["unlensed"], rel=RTOL)
         assert scan[y]["snr"] == pytest.approx(r["lensed"][str(y)], rel=RTOL), y
-        assert scan[y]["snr"] == pytest.approx(pub["lensed"][str(y)], rel=1e-8), y   # README numbers
+        # README numbers: made with the earlier spline point mass (|F error| <= 2e-6); the GWLENS
+        # solver point mass used now is exact to 1e-9, so these agree to ~5e-8, not to 1e-9
+        assert scan[y]["snr"] == pytest.approx(pub["lensed"][str(y)], rel=1e-6), y
 
 
 @pytest.mark.parametrize("key", [k for k in REF["lens_F"] if k != "f"])

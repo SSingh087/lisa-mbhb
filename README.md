@@ -57,35 +57,37 @@ export GWLENS_PATH=/path/to/GWLENS
 
 ## Lens models
 
-Lenses are chosen by name. Pass only the parameters you want to change; the rest use defaults.
+All lensing is computed by the [GWLENS](https://github.com/hsreekanth15/GWLENS) solvers (`Solver1D`, or `Solver2D` for potentials with shear). `lisa_mbhb.lensing` only converts physical units to GWLENS's dimensionless ones (f → w = 8πG M<sub>Lz</sub> f / c³, and M200, z → the NFW ψ₀, x<sub>s</sub>), fixes the solver settings (`solver_kw()`: GWLENS `PE_SETTINGS` and `time_origin=None`, so every lens uses the same time convention as the analytic point mass), and applies F(f) to the LISA signal.
+
+Use any GWLENS potential directly, or a named lens with defaults for the parameters you leave out:
 
 ```python
+from gwlens.solver import solver1d as S1
 from lisa_mbhb import lensing as L
 
-L.available_lenses()                         # {name: {parameter: default}}
+lens = L.Lens(S1.point_mass(1.0) + S1.sis(0.3), y=0.5, mass_lz=1e7)   # any GWLENS potential
 lens = L.get_lens("pm")                      # point mass, all defaults (mass_lz=1e7, y=1)
 lens = L.get_lens("pm", mass_lz=1e8, y=0.5)  # override some parameters
 lens = L.get_lens({"name": "nfw", "halo_mass": 1e11, "zs": 2.0})   # config dict, e.g. from JSON
+L.available_lenses()                         # {name: {parameter: default}}
 
 sig = L.LensedMBHB(params, lens={"name": "halo", "halo_mass": 1e9})  # name or config also accepted here
 ```
 
-| name (aliases) | lens | parameters (default) |
+| name (aliases) | GWLENS potential | parameters (default) |
 |---|---|---|
-| `pm` (`point`, `point_mass`) | point mass, exact F(w, y) | `mass_lz` (1e7), `y` (1.0), `dw` (0.05) |
-| `nfw` (`pm_nfw`) | point mass at the centre of an NFW halo | `mass_lz` (1e7), `y` (1.0), `halo_mass` (1e11, M200), `zs` (1.0), `zl_frac` (0.5), `conc` (None: c200(M) relation) |
-| `halo` (`nfw_only`) | NFW halo alone, same units as `nfw` | as `nfw` |
-| `sis` | singular isothermal sphere | `mass_lz` (1e7), `y` (1.0) |
-| `cis` | cored isothermal sphere | `mass_lz` (1e7), `y` (1.0), `rc` (0.05) |
-| `lookup` | interpolated GWLENS HDF5 table | `table_path` (required), `mass_lz` (1e7), `y` (1.0) |
+| `pm` (`point`, `point_mass`) | `point_mass(1)` | `mass_lz` (1e7), `y` (1.0) |
+| `nfw` (`pm_nfw`) | `point_mass(1) + nfw(1/x_s, ψ₀)`: point mass at the centre of an NFW halo | `mass_lz` (1e7), `y` (1.0), `halo_mass` (1e11, M200), `zs` (1.0), `zl_frac` (0.5), `conc` (None: c200(M) relation) |
+| `halo` (`nfw_only`) | `nfw(1/x_s, ψ₀)`: the halo alone, same units as `nfw` | as `nfw` |
+| `sis` | `sis(1)` | `mass_lz` (1e7), `y` (1.0) |
+| `cis` | `cis(1, rc)` | `mass_lz` (1e7), `y` (1.0), `rc` (0.05) |
 
-`mass_lz` is the redshifted lens mass in M<sub>sun</sub> and `y` the impact parameter in Einstein-radius units. Unknown parameter names raise an error. The older `"nfw:1e9"` / `"halo:1e9"` strings still work. To add your own lens:
+`mass_lz` is the redshifted mass that sets the units (x and y in units of its Einstein radius, the same for every lens, so lenses compare point by point), in M<sub>sun</sub>. ψ₀ = (1+z<sub>L</sub>) M200 / (m(c) M<sub>Lz</sub>), with m(c) = ln(1+c) − c/(1+c). Unknown parameter names raise an error, and the `"nfw:1e9"` / `"halo:1e9"` strings work too. The Fisher study (`lisa_mbhb.fisher_lenses`) builds its PML / NFW / PML+NFW potentials with external convergence and shear the same way, with `Solver2D`. To name your own lens:
 
 ```python
-@L.register_lens("mylens", dict(mass_lz=1e7, y=1.0, alpha=0.5))
-class MyLens:
-    def __init__(self, mass_lz, y, alpha): ...
-    def amplification(self, f): ...          # complex F(f), f in Hz
+@L.register_lens("sis_scaled", dict(mass_lz=1e7, y=1.0, psi0=0.5))
+def sis_scaled(mass_lz, y, psi0):
+    return L.Lens(S1.sis(psi0), y, mass_lz)
 ```
 
 ## Usage

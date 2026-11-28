@@ -97,34 +97,19 @@ def test_point_lens_geometric_optics_limit():
     assert abs(F_analytic(1e-3, y)) == pytest.approx(1.0, abs=0.02)   # wave limit F -> 1
 
 
-def test_point_lens_interpolation_matches_exact():
+def test_point_lens_solver_matches_exact():
+    """The GWLENS solver point mass equals the analytic F (Takahashi & Nakamura 2003)."""
     from gwlens.lens.point import F_analytic
-    lens = L.PointMassLens(1e7, 0.5)
+    lens = L.get_lens("pm", mass_lz=1e7, y=0.5)
     f = np.array([2e-3, 7e-3, 1.3e-2])
-    F = lens.amplification(f)
     ex = np.array([F_analytic(w, 0.5) for w in lens.w(f)])
-    np.testing.assert_allclose(F, ex, atol=2e-3)
-
-
-def test_lookup_table_lens_matches_point_lens(tmp_path):
-    import h5py
-    from gwlens.lens.point import F_analytic
-    w = np.linspace(0.05, 3.0, 60)
-    y = np.linspace(0.4, 0.6, 5)
-    res = np.array([[[F_analytic(wi, yi).real, F_analytic(wi, yi).imag] for yi in y] for wi in w])
-    path = tmp_path / "t.h5"
-    with h5py.File(path, "w") as h:
-        h["w_values"], h["y_values"], h["results"] = w, y, res
-    pm = L.PointMassLens(1e7, 0.5)
-    tab = L.LookupTableLens(str(path), pm.w, 0.5)
-    f = np.linspace(1e-3, 2.3e-3, 20)   # w = 1.2 .. 2.9, inside the table
-    np.testing.assert_allclose(tab.amplification(f), pm.amplification(f), atol=5e-3)
+    np.testing.assert_allclose(lens.amplification(f), ex, rtol=0, atol=1e-7)
 
 
 def test_lensing_changes_signal_and_mismatch_decreases_with_y(params):
     mm = []
     for y in (0.5, 2.0):
-        s = L.LensedMBHB(params, L.PointMassLens(1e7, y))
+        s = L.LensedMBHB(params, L.get_lens("pm", mass_lz=1e7, y=y))
         mm.append(s.mismatch(max_dt=400, n_dt=401))
     assert mm[0] > mm[1] > 0
 

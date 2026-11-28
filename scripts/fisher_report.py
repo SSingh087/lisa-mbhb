@@ -191,11 +191,11 @@ def fig_noise_source():
 def fig_amplification():
     from lisa_mbhb import lensing as L
     f = np.logspace(-4.3, -1.6, 500); fig, ax = plt.subplots(1, 3, figsize=(14, 3.8), sharey=True)
-    for M, c in zip((1e6, 1e7, 1e8), ("#6baed6", "#2f6db5", "#08306b")): ax[0].semilogx(f, np.abs(L.PointMassLens(M, 1.0).amplification(f)), color=c, label=f"$M_{{Lz}}=10^{{{int(np.log10(M))}}}$")
-    for y, c in zip((0.3, 1.0, 2.0), ("#fdae6b", "#e6550d", "#7f2704")): ax[1].semilogx(f, np.abs(L.PointMassLens(1e7, y).amplification(f)), color=c, label=f"$y={y:g}$")
-    ax[2].semilogx(f, np.abs(L.PointMassLens(1e7, 1.0).amplification(f)), color=COL["pm"], label="point mass")
+    for M, c in zip((1e6, 1e7, 1e8), ("#6baed6", "#2f6db5", "#08306b")): ax[0].semilogx(f, np.abs(L.get_lens("pm", mass_lz=M, y=1.0).amplification(f)), color=c, label=f"$M_{{Lz}}=10^{{{int(np.log10(M))}}}$")
+    for y, c in zip((0.3, 1.0, 2.0), ("#fdae6b", "#e6550d", "#7f2704")): ax[1].semilogx(f, np.abs(L.get_lens("pm", mass_lz=1e7, y=y).amplification(f)), color=c, label=f"$y={y:g}$")
+    ax[2].semilogx(f, np.abs(L.get_lens("pm", mass_lz=1e7, y=1.0).amplification(f)), color=COL["pm"], label="point mass")
     for l in ("nfw:1e11", "halo:1e11"):
-        try: ax[2].semilogx(f, np.abs(L.make_lens(l, 1e7, 1.0, 1.0).amplification(f)), color=COL[l], label=NICE[l])
+        try: ax[2].semilogx(f, np.abs(L.get_lens(l, mass_lz=1e7, y=1.0, zs=1.0).amplification(f)), color=COL[l], label=NICE[l])
         except Exception as e: print("lens failed", l, e)
     for x, t in zip(ax, ("point mass, $y=1$", "point mass, $M_{Lz}=10^7$", "$M_{Lz}=10^7$ (unit), $y=1$")): x.set_title(t, fontsize=10); x.set_xlabel("f [Hz]"); x.legend(fontsize=8)
     ax[0].set_ylabel("$|F(f)|$"); fig.tight_layout(); fig.savefig(os.path.join(FIG, "f02_amplification.png"), dpi=170); plt.close(fig)
